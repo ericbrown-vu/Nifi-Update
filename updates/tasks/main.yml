@@ -1,0 +1,105 @@
+---
+# tasks file for updates
+- name: Make sure Nifi is up
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ nifi.port }}/nifi/login"
+    method: GET
+    validate_certs: false
+    status_code: 200
+  register: nifi_status
+  retries: 30
+  delay: 10
+  until: nifi_status is success
+
+- name: Get NiFi access token
+  block:
+    - name: Request token
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ nifi.port }}/nifi-api/access/token"
+        method: POST
+        validate_certs: false
+        headers:
+          Accept: text/plain
+          Content-Type: application/x-www-form-urlencoded
+        body_format: form-urlencoded
+        body:
+          username: "{{ nifi_admin_username }}"
+          password: "{{ nifi_admin_password }}"
+        status_code: [200, 201]
+        return_content: true
+      register: token_response
+      retries: 3
+      delay: 5
+      until: token_response is success
+
+    - name: Debug token response
+      ansible.builtin.debug:
+        msg: "Token response status: {{ token_response.status }}"
+      when: token_response is defined
+  no_log: false
+
+- name: Upgrade all packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    skip_broken: true
+    exclude: "grafana*,mysql*"
+  ignore_unreachable: true
+  ignore_errors: true
+  register: update_packages
+  retries: 3
+  delay: 5
+  environment:
+    ACCEPT_EULA: "y"
+
+- name: Reboot Server
+  ansible.builtin.shell: reboot
+  when: update_packages is changed
+
+- name: Wait for reboot
+  ansible.builtin.wait_for:
+    timeout: 60
+  when: update_packages is changed
+
+- name: Wait for NiFi to start
+  ansible.builtin.wait_for:
+    port: "{{ nifi.port }}"
+    timeout: 300
+  when: update_packages is changed
+
+- name: Check NiFi cluster status
+  block:
+    - name: Get cluster status
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ nifi.port }}/nifi-api/controller/cluster"
+        method: GET
+        return_content: true
+        validate_certs: false
+        status_code: 200
+        headers:
+          Authorization: "Bearer {{ token_response.content }}"
+      register: cluster_status
+      until: >
+        cluster_status.json is defined and
+        cluster_status.json.cluster is defined and
+        cluster_status.json.cluster.nodes is defined and
+        cluster_status.json.cluster.nodes | length == 3 and
+        (cluster_status.json.cluster.nodes | selectattr('status', 'equalto', 'CONNECTED') | list | length) == 3
+      retries: 30
+      delay: 10
+
+    - name: Verify node is connected and running
+      ansible.builtin.uri:
+        url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ nifi.port }}/nifi-api/flow/status"
+        method: GET
+        return_content: true
+        validate_certs: false
+        status_code: 200
+        headers:
+          Authorization: "Bearer {{ token_response.content }}"
+      register: nifi_status
+      until: >
+        nifi_status.json is defined and
+        nifi_status.json.controllerStatus is defined
+      retries: 30
+      delay: 10

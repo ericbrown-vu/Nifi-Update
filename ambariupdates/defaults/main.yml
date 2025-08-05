@@ -1,0 +1,6 @@
+---
+# defaults file for ambariupdates
+ambari_port: 8443
+ambari_admin_username: "admin"
+ambari_admin_password: "tx!&nRq)683wNMUvV!vwOA2QsgC(uPuK"
+cluster_name: "Nifi_DR"

@@ -1,0 +1,19 @@
+---
+#first test of restore role
+- name: Update Nifi
+  hosts: devnifiwork
+  become: true
+  become_method: sudo
+  serial: 1
+  order: reverse_inventory
+  roles:
+    - updates
+
+- name: Update Ambari
+  hosts: devnifiamb
+  become: true
+  become_method: sudo
+  roles:
+    - ambariupdates
+  
+  
