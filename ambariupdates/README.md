@@ -1,17 +1,51 @@
-Role Name
-=========
+Ambari Updates Role
+==================
 
-A brief description of the role goes here.
+An Ansible role for managing Ambari service updates and operations.
 
 Requirements
 ------------
 
-Any pre-requisites that may not be covered by Ansible itself or the role should be mentioned here. For instance, if the role uses the EC2 module, it may be a good idea to mention in this section that the boto package is required.
+- Ansible 2.9 or higher
+- Access to Ambari server
+- Appropriate credentials for Ambari authentication
 
 Role Variables
 --------------
 
-A description of the settable variables for this role should go here, including any variables that are in defaults/main.yml, vars/main.yml, and any variables that can/should be set via parameters to the role. Any variables that are read from other roles and/or the global scope (ie. hostvars, group vars, etc.) should be mentioned here as well.
+### Default Variables
+
+```yaml
+ambari_port: 8443
+cluster_name: "devnifi"
+```
+
+### Credential Management
+
+This role requires Ambari admin credentials for authentication. To maintain security and portability, credentials should NOT be stored directly in the role. Instead, you have several options:
+
+1. **Environment Variables (Recommended)**
+   ```bash
+   export AMBARI_ADMIN_USERNAME="your_username"
+   export AMBARI_ADMIN_PASSWORD="your_password"
+   ```
+
+2. **Host/Group Variables with Ansible Vault**
+   ```bash
+   # Create encrypted vars file
+   ansible-vault create group_vars/ambari_vault.yml
+   
+   # Add credentials
+   ambari_admin_username: "your_username"
+   ambari_admin_password: "your_password"
+   ```
+
+3. **External Secrets Management**
+   ```yaml
+   # Example with HashiCorp Vault
+   ambari_admin_username: "{{ lookup('hashi_vault', 'secret=secret/ambari/credentials:username') }}"
+   ambari_admin_password: "{{ lookup('hashi_vault', 'secret=secret/ambari/credentials:password') }}"
+   ```
 
 Dependencies
 ------------
@@ -21,11 +55,14 @@ A list of other roles hosted on Galaxy should go here, plus any details in regar
 Example Playbook
 ----------------
 
-Including an example of how to use your role (for instance, with variables passed in as parameters) is always nice for users too:
-
-    - hosts: servers
-      roles:
-         - { role: username.rolename, x: 42 }
+```yaml
+- hosts: ambari_servers
+  vars_files:
+    - group_vars/ambari_vault.yml  # Optional: if using vault for credentials
+  roles:
+    - role: ambariupdates
+      vars:
+        cluster_name: "my_cluster"  # Override default cluster name if needed
 
 License
 -------
