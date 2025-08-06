@@ -1,4 +1,8 @@
 ---
 # NiFi API authentication credentials
-nifi_admin_username: "eric.brown"
-nifi_admin_password: "Temps-BallOfConfusion"
+# These can be set via:
+# 1. Environment variables (NIFI_ADMIN_USERNAME, NIFI_ADMIN_PASSWORD)
+# 2. Host/group vars with vault encryption
+# 3. External secrets management system
+nifi_admin_username: "{{ lookup('env', 'NIFI_ADMIN_USERNAME') | default('') }}"
+nifi_admin_password: "{{ lookup('env', 'NIFI_ADMIN_PASSWORD') | default('') }}"
