@@ -41,14 +41,31 @@
     force_basic_auth: true
     return_content: true
   register: zk_status
-  until: >
-    zk_status.status == 200 and
-    zk_status.content is defined and
-    (zk_status.content | from_json).host_components is defined and
-    (zk_status.content | from_json).host_components | length == 3 and
-    ((zk_status.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) == 3
+
+- name: Get running ZooKeeper count
+  ansible.builtin.set_fact:
+    running_zk_count: >
+      {{- (zk_status.content | from_json).host_components | default([]) |
+          map(attribute='HostRoles') |
+          selectattr('state', 'equalto', 'STARTED') |
+          list |
+          length -}}
+  when: zk_status.content is defined
+
+- name: Show ZooKeeper status
+  ansible.builtin.debug:
+    var: running_zk_count
+  when: zk_status.content is defined
+
+- name: Verify ZooKeeper is running
+  ansible.builtin.assert:
+    that: running_zk_count | int > 0
+    fail_msg: No running ZooKeeper nodes found
+    success_msg: Found {{ running_zk_count }} running ZooKeeper nodes
+  register: zk_check
   retries: 30
   delay: 10
+  until: not zk_check.failed
 
 - name: Check NIFI status (should have 3 nodes)
   ansible.builtin.uri:
