@@ -4,4 +4,4 @@ ambari_port: 8443
 # Credentials can be provided via environment variables or overridden in group_vars
 ambari_admin_username: "{{ lookup('env', 'AMBARI_ADMIN_USERNAME') | default('admin') }}"
 ambari_admin_password: "{{ lookup('env', 'AMBARI_ADMIN_PASSWORD') | default('') }}"
-cluster_name: "devnifi"
+cluster_name: "DEVNIFI"

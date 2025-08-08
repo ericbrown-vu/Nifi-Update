@@ -42,6 +42,10 @@
     return_content: true
   register: zk_status
 
+- name: debug - show zookeeper status
+  ansible.builtin.debug:
+    var: zk_status.content | from_json
+
 - name: Get running ZooKeeper count
   ansible.builtin.set_fact:
     running_zk_count: >
@@ -158,4 +162,158 @@
     (registry_status.content | from_json).host_components | length == 1 and
     ((registry_status.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) == 1
   retries: 30
+  delay: 10
+
+# Stop all services and Ambari
+- name: Stop all services via Ambari API
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services"
+    method: PUT
+    body: '{"RequestInfo":{"context":"Stop All Services"},"Body":{"ServiceInfo":{"state":"INSTALLED"}}}'
+    body_format: json
+    status_code: [200, 201, 202]
+    headers:
+      X-Requested-By: ambari
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+  register: stop_services
+  until: stop_services is success
+  retries: 3
+  delay: 10
+
+- name: Debug stop services response
+  ansible.builtin.debug:
+    var: stop_services
+
+- name: Extract request ID
+  ansible.builtin.set_fact:
+    stop_request_id: "{{ stop_services.json.Requests.id | default(stop_services.json.id) | default('') }}"
+
+- name: Debug request ID
+  ansible.builtin.debug:
+    var: stop_request_id
+
+- name: Wait for services to stop
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ stop_request_id }}"
+    method: GET
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    headers:
+      X-Requested-By: ambari
+    status_code: [200, 404]
+    return_content: true
+  register: stop_status
+  until: stop_status is success
+  retries: 60
+  delay: 10
+  when: stop_request_id != ''
+
+- name: Debug stop status response
+  ansible.builtin.debug:
+    var: stop_status.content | from_json
+  when: stop_request_id != ''
+
+- name: Wait for services to stop
+  ansible.builtin.pause:
+    seconds: 300
+  when: stop_request_id != ''
+
+- name: Debug final status
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ stop_request_id }}"
+    method: GET
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    headers:
+      X-Requested-By: ambari
+    status_code: [200, 404]
+    return_content: true
+  register: final_status
+  when: stop_request_id != ''
+
+- name: Show final status
+  ansible.builtin.debug:
+    var: final_status.content | from_json
+  when: stop_request_id != ''
+
+- name: Stop Ambari server
+  ansible.builtin.systemd:
+    name: ambari-server
+    state: stopped
+  become: true
+
+# Update and reboot if needed
+- name: Update Ambari server packages
+  ansible.builtin.dnf:
+    name: "*"
+    state: latest
+    skip_broken: true
+  become: true
+  register: update_result
+
+- name: Reboot if packages were updated
+  ansible.builtin.reboot:
+    reboot_timeout: 600
+  when: update_result.changed
+  become: true
+
+# Start Ambari and services
+- name: Start Ambari server
+  ansible.builtin.systemd:
+    name: ambari-server
+    state: started
+  become: true
+
+- name: Wait for Ambari server to be ready
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/#/login"
+    method: GET
+    validate_certs: false
+    status_code: 200
+  register: ambari_status
+  retries: 60
+  delay: 10
+  until: ambari_status is success
+
+- name: Start all services via Ambari API
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services"
+    method: PUT
+    body: '{"RequestInfo":{"context":"Start All Services"},"Body":{"ServiceInfo":{"state":"STARTED"}}}'
+    body_format: json
+    status_code: [200, 201, 202]
+    headers:
+      X-Requested-By: ambari
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+  register: start_services
+  until: start_services is success
+  retries: 3
+  delay: 10
+
+- name: Wait for services to start
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ start_services.json.Requests.id }}"
+    method: GET
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    headers:
+      X-Requested-By: ambari
+    status_code: [200, 404]
+    return_content: true
+  register: start_status
+  until: start_status.status == 200 and start_status.json.Requests.request_status == "COMPLETED"
+  retries: 60
   delay: 10
