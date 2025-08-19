@@ -1,0 +1,5 @@
+---
+# Ambari credentials from environment variables
+ambari_admin_username: "{{ lookup('env', 'AMBARI_ADMIN_USERNAME') }}"
+ambari_admin_password: "{{ lookup('env', 'AMBARI_ADMIN_PASSWORD') }}"
+ambari_port: 8443

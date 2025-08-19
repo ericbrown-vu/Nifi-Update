@@ -17,7 +17,7 @@
     url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/users/admin/privileges"
     method: GET
     validate_certs: false
-    status_code: [200, 403]
+    status_code: 200
     headers:
       X-Requested-By: ambari
       Content-Type: application/x-www-form-urlencoded
@@ -26,6 +26,7 @@
     force_basic_auth: true
     return_content: true
   register: auth_response
+  failed_when: auth_response.status == 403
 
 - name: Check ZooKeeper status (should have 3 nodes)
   ansible.builtin.uri:
