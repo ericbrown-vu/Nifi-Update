@@ -225,9 +225,33 @@
     var: stop_status.content | from_json
   when: stop_request_id != ''
 
-- name: Wait for services to stop
-  ansible.builtin.pause:
-    seconds: 300
+- name: Check if all services are stopped
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services?fields=ServiceInfo/state"
+    method: GET
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    headers:
+      X-Requested-By: ambari
+    status_code: [200]
+    return_content: true
+  register: services_status
+
+- name: Debug service states
+  ansible.builtin.debug:
+    var: services_status.json
+
+- name: Verify services are stopped
+  ansible.builtin.assert:
+    that: |
+      services_status.json.items | map(attribute='ServiceInfo') | map(attribute='state') | list | all('ne', 'STARTED')
+    msg: "Some services are still in STARTED state"
+  register: service_check
+  until: service_check is success
+  retries: 30
+  delay: 10
   when: stop_request_id != ''
 
 - name: Debug final status
@@ -320,6 +344,6 @@
     status_code: [200, 404]
     return_content: true
   register: start_status
-  until: start_status.status == 200 and start_status.json.Requests.request_status == "COMPLETED"
+  until: start_status.status == 200 and (start_status.content | from_json).Requests.request_status == "COMPLETED"
   retries: 60
   delay: 10
