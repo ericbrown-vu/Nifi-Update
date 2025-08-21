@@ -239,15 +239,18 @@
     return_content: true
   register: services_status
 
+- name: Extract service states
+  ansible.builtin.set_fact:
+    current_states: "{{ ((services_status.content | from_json).items | json_query('[].ServiceInfo.state')) }}"
+
 - name: Debug service states
   ansible.builtin.debug:
-    var: services_status.json
+    var: current_states
 
-- name: Verify services are stopped
+- name: Verify no services are running
   ansible.builtin.assert:
-    that: |
-      services_status.json.items | map(attribute='ServiceInfo') | map(attribute='state') | list | all('ne', 'STARTED')
-    msg: "Some services are still in STARTED state"
+    that: "'STARTED' not in current_states"
+    msg: "At least one service is still running"
   register: service_check
   until: service_check is success
   retries: 30
