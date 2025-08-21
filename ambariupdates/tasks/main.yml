@@ -12,6 +12,11 @@
   delay: 10
   until: ambari_status is success
 
+- name: Debug ambari status
+  ansible.builtin.debug:
+    var: ambari_admin_username,ambari_admin_password
+
+
 - name: Get Ambari auth token
   ansible.builtin.uri:
     url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/users/admin/privileges"
@@ -185,9 +190,9 @@
   retries: 3
   delay: 10
 
-- name: Debug stop services response
-  ansible.builtin.debug:
-    var: stop_services
+# - name: Debug stop services response
+#   ansible.builtin.debug:
+#     var: stop_services
 
 - name: Extract request ID
   ansible.builtin.set_fact:

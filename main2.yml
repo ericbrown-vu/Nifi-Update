@@ -1,7 +1,7 @@
 ---
 #first test of restore role
 - name: Update Ambari
-  hosts: da11nifiamb
+  hosts: devnifiamb
 
   roles:
     - ambariupdates
