@@ -344,9 +344,35 @@
     force_basic_auth: true
     headers:
       X-Requested-By: ambari
-    status_code: [200, 404]
+    status_code: [200]
     return_content: true
   register: start_status
   until: start_status.status == 200 and (start_status.content | from_json).Requests.request_status == "COMPLETED"
   retries: 60
   delay: 10
+
+- name: Check service states
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services?fields=ServiceInfo/state,host_components/HostRoles/state"
+    method: GET
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    headers:
+      X-Requested-By: ambari
+    status_code: [200]
+    return_content: true
+  register: service_status
+
+- name: Debug service and node status
+  ansible.builtin.debug:
+    msg: |
+      Services: {{ (service_status.content | from_json).items | map(attribute='ServiceInfo') | map(attribute='state') | list }}
+      Host Components: {{ (service_status.content | from_json).items | json_query('[].host_components[].HostRoles.state') | list }}
+
+- name: Verify all services started
+  ansible.builtin.assert:
+    that: |
+      ((service_status.content | from_json).items | selectattr('ServiceInfo.state', 'equalto', 'STARTED') | list | length) == ((service_status.content | from_json).items | length)
+    msg: "Not all services are in STARTED state"
