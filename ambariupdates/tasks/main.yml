@@ -7,14 +7,11 @@
     method: GET
     validate_certs: false
     status_code: 200
+    return_content: true
   register: ambari_status
   retries: 30
   delay: 10
   until: ambari_status is success
-
-- name: Debug ambari status
-  ansible.builtin.debug:
-    var: ambari_admin_username,ambari_admin_password
 
 
 - name: Get Ambari auth token
@@ -48,10 +45,6 @@
     return_content: true
   register: zk_status
 
-- name: debug - show zookeeper status
-  ansible.builtin.debug:
-    var: zk_status.content | from_json
-
 - name: Get running ZooKeeper count
   ansible.builtin.set_fact:
     running_zk_count: >
@@ -60,11 +53,6 @@
           selectattr('state', 'equalto', 'STARTED') |
           list |
           length -}}
-  when: zk_status.content is defined
-
-- name: Show ZooKeeper status
-  ansible.builtin.debug:
-    var: running_zk_count
   when: zk_status.content is defined
 
 - name: Verify ZooKeeper is running
@@ -170,12 +158,12 @@
   retries: 30
   delay: 10
 
-# Stop all services and Ambari
-- name: Stop all services via Ambari API
+# Stop Ranger service
+- name: Stop Ranger service via Ambari API
   ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services"
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/RANGER"
     method: PUT
-    body: '{"RequestInfo":{"context":"Stop All Services"},"Body":{"ServiceInfo":{"state":"INSTALLED"}}}'
+    body: '{"RequestInfo":{"context":"Stop Ranger Service"},"Body":{"ServiceInfo":{"state":"INSTALLED"}}}'
     body_format: json
     status_code: [200, 201, 202]
     headers:
@@ -185,97 +173,30 @@
     url_password: "{{ ambari_admin_password }}"
     force_basic_auth: true
     return_content: true
-  register: stop_services
-  until: stop_services is success
+  register: stop_ranger
+  until: stop_ranger is success
   retries: 3
   delay: 10
 
-# - name: Debug stop services response
-#   ansible.builtin.debug:
-#     var: stop_services
-
-- name: Extract request ID
-  ansible.builtin.set_fact:
-    stop_request_id: "{{ stop_services.json.Requests.id | default(stop_services.json.id) | default('') }}"
-
-- name: Debug request ID
-  ansible.builtin.debug:
-    var: stop_request_id
-
-- name: Wait for services to stop
+# Stop Solr service
+- name: Stop Solr service via Ambari API
   ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ stop_request_id }}"
-    method: GET
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/AMBARI_INFRA_SOLR"
+    method: PUT
+    body: '{"RequestInfo":{"context":"Stop Solr Service"},"Body":{"ServiceInfo":{"state":"INSTALLED"}}}'
+    body_format: json
+    status_code: [200, 201, 202]
+    headers:
+      X-Requested-By: ambari
     validate_certs: false
     url_username: "{{ ambari_admin_username }}"
     url_password: "{{ ambari_admin_password }}"
     force_basic_auth: true
-    headers:
-      X-Requested-By: ambari
-    status_code: [200, 404]
     return_content: true
-  register: stop_status
-  until: stop_status is success
-  retries: 60
+  register: stop_solr
+  until: stop_solr is success
+  retries: 3
   delay: 10
-  when: stop_request_id != ''
-
-- name: Debug stop status response
-  ansible.builtin.debug:
-    var: stop_status.content | from_json
-  when: stop_request_id != ''
-
-- name: Check if all services are stopped
-  ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services?fields=ServiceInfo/state"
-    method: GET
-    validate_certs: false
-    url_username: "{{ ambari_admin_username }}"
-    url_password: "{{ ambari_admin_password }}"
-    force_basic_auth: true
-    headers:
-      X-Requested-By: ambari
-    status_code: [200]
-    return_content: true
-  register: services_status
-
-- name: Extract service states
-  ansible.builtin.set_fact:
-    current_states: "{{ ((services_status.content | from_json).items | json_query('[].ServiceInfo.state')) }}"
-
-- name: Debug service states
-  ansible.builtin.debug:
-    var: current_states
-
-- name: Verify no services are running
-  ansible.builtin.assert:
-    that: "'STARTED' not in current_states"
-    msg: "At least one service is still running"
-  register: service_check
-  until: service_check is success
-  retries: 30
-  delay: 10
-  when: stop_request_id != ''
-
-- name: Debug final status
-  ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ stop_request_id }}"
-    method: GET
-    validate_certs: false
-    url_username: "{{ ambari_admin_username }}"
-    url_password: "{{ ambari_admin_password }}"
-    force_basic_auth: true
-    headers:
-      X-Requested-By: ambari
-    status_code: [200, 404]
-    return_content: true
-  register: final_status
-  when: stop_request_id != ''
-
-- name: Show final status
-  ansible.builtin.debug:
-    var: final_status.content | from_json
-  when: stop_request_id != ''
 
 - name: Stop Ambari server
   ansible.builtin.systemd:
@@ -316,11 +237,36 @@
   delay: 10
   until: ambari_status is success
 
-- name: Start all services via Ambari API
+- name: Additional wait for Ambari services to stabilize
+  ansible.builtin.pause:
+    seconds: 30
+
+- name: Verify Ranger is stopped before starting
   ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services"
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/RANGER/components/RANGER_ADMIN?fields=host_components/HostRoles/state"
+    method: GET
+    validate_certs: false
+    status_code: [200, 404, 403, 401]
+    headers:
+      X-Requested-By: ambari
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+  register: ranger_pre_start
+  until: >
+    ranger_pre_start.status == 200 and
+    ranger_pre_start.content is defined and
+    (ranger_pre_start.content | from_json).host_components is defined and
+    ((ranger_pre_start.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'INSTALLED') | list | length) == 1
+  retries: 30
+  delay: 10
+
+- name: Start Ranger service via Ambari API
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/RANGER"
     method: PUT
-    body: '{"RequestInfo":{"context":"Start All Services"},"Body":{"ServiceInfo":{"state":"STARTED"}}}'
+    body: '{"RequestInfo":{"context":"Start Ranger Service"},"Body":{"ServiceInfo":{"state":"STARTED"}}}'
     body_format: json
     status_code: [200, 201, 202]
     headers:
@@ -329,50 +275,112 @@
     url_username: "{{ ambari_admin_username }}"
     url_password: "{{ ambari_admin_password }}"
     force_basic_auth: true
-  register: start_services
-  until: start_services is success
+    return_content: true
+  register: start_ranger
+  until: start_ranger is success
+  retries: 6
+  delay: 20
+
+- name: Start Solr service via Ambari API
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/AMBARI_INFRA_SOLR"
+    method: PUT
+    body: '{"RequestInfo":{"context":"Start Solr Service"},"Body":{"ServiceInfo":{"state":"STARTED"}}}'
+    body_format: json
+    status_code: [200, 201, 202]
+    headers:
+      X-Requested-By: ambari
+    validate_certs: false
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+  register: start_solr
+  until: start_solr is success
   retries: 3
   delay: 10
 
-- name: Wait for services to start
+# Final service verification
+- name: Verify Ranger is running
   ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/requests/{{ start_services.json.Requests.id }}"
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/RANGER/components/RANGER_ADMIN?fields=host_components/HostRoles/state"
     method: GET
     validate_certs: false
+    status_code: [200]
+    headers:
+      X-Requested-By: ambari
     url_username: "{{ ambari_admin_username }}"
     url_password: "{{ ambari_admin_password }}"
     force_basic_auth: true
-    headers:
-      X-Requested-By: ambari
-    status_code: [200]
     return_content: true
-  register: start_status
-  until: start_status.status == 200 and (start_status.content | from_json).Requests.request_status == "COMPLETED"
-  retries: 60
+  register: ranger_final
+  until: >
+    ranger_final.status == 200 and
+    ranger_final.content is defined and
+    (ranger_final.content | from_json).host_components is defined and
+    ((ranger_final.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) == 1
+  retries: 30
   delay: 10
 
-- name: Check service states
+- name: Verify Solr is running
   ansible.builtin.uri:
-    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services?fields=ServiceInfo/state,host_components/HostRoles/state"
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/AMBARI_INFRA_SOLR/components/INFRA_SOLR?fields=host_components/HostRoles/state"
     method: GET
     validate_certs: false
+    status_code: [200]
+    headers:
+      X-Requested-By: ambari
     url_username: "{{ ambari_admin_username }}"
     url_password: "{{ ambari_admin_password }}"
     force_basic_auth: true
+    return_content: true
+  register: solr_final
+  until: >
+    solr_final.status == 200 and
+    solr_final.content is defined and
+    (solr_final.content | from_json).host_components is defined and
+    ((solr_final.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) == 1
+  retries: 30
+  delay: 10
+
+- name: Final NiFi status check
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/NIFI/components/NIFI_MASTER?fields=host_components/HostRoles/state"
+    method: GET
+    validate_certs: false
+    status_code: [200]
     headers:
       X-Requested-By: ambari
-    status_code: [200]
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
     return_content: true
-  register: service_status
+  register: nifi_final
+  until: >
+    nifi_final.status == 200 and
+    nifi_final.content is defined and
+    (nifi_final.content | from_json).host_components is defined and
+    ((nifi_final.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) == 3
+  retries: 30
+  delay: 10
 
-- name: Debug service and node status
-  ansible.builtin.debug:
-    msg: |
-      Services: {{ (service_status.content | from_json).items | map(attribute='ServiceInfo') | map(attribute='state') | list }}
-      Host Components: {{ (service_status.content | from_json).items | json_query('[].host_components[].HostRoles.state') | list }}
-
-- name: Verify all services started
-  ansible.builtin.assert:
-    that: |
-      ((service_status.content | from_json).items | selectattr('ServiceInfo.state', 'equalto', 'STARTED') | list | length) == ((service_status.content | from_json).items | length)
-    msg: "Not all services are in STARTED state"
+- name: Final ZooKeeper status check
+  ansible.builtin.uri:
+    url: "https://{{ inventory_hostname }}.vuhl.root.mrc.local:{{ ambari_port }}/api/v1/clusters/{{ cluster_name }}/services/ZOOKEEPER/components/ZOOKEEPER_SERVER?fields=host_components/HostRoles/state"
+    method: GET
+    validate_certs: false
+    status_code: [200]
+    headers:
+      X-Requested-By: ambari
+    url_username: "{{ ambari_admin_username }}"
+    url_password: "{{ ambari_admin_password }}"
+    force_basic_auth: true
+    return_content: true
+  register: zk_final
+  until: >
+    zk_final.status == 200 and
+    zk_final.content is defined and
+    (zk_final.content | from_json).host_components is defined and
+    ((zk_final.content | from_json).host_components | map(attribute='HostRoles') | selectattr('state', 'equalto', 'STARTED') | list | length) > 0
+  retries: 30
+  delay: 10
